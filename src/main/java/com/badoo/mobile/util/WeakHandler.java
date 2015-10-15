@@ -49,8 +49,9 @@ import java.util.concurrent.locks.ReentrantLock;
  * @see android.os.Handler
  *
  * Created by Dmytro Voronkevych on 17/06/2014.
+ * Optimized by Septenary on 8/15/2015
  */
-@SuppressWarnings("unused")
+
 public class WeakHandler {
     private final Handler.Callback mCallback; // hard reference to Callback. We need to keep callback in memory
     private final ExecHandler mExec;
@@ -68,7 +69,7 @@ public class WeakHandler {
      */
     public WeakHandler() {
         mCallback = null;
-        mExec = new ExecHandler();
+        mExec = new ExecHandler(this);
     }
 
     /**
@@ -83,7 +84,7 @@ public class WeakHandler {
      */
     public WeakHandler(@Nullable Handler.Callback callback) {
         mCallback = callback; // Hard referencing body
-        mExec = new ExecHandler(new WeakReference<>(callback)); // Weak referencing inside ExecHandler
+        mExec = new ExecHandler(this); // Weak referencing inside ExecHandler
     }
 
     /**
@@ -93,7 +94,7 @@ public class WeakHandler {
      */
     public WeakHandler(@NonNull Looper looper) {
         mCallback = null;
-        mExec = new ExecHandler(looper);
+        mExec = new ExecHandler(this, looper);
     }
 
     /**
@@ -105,7 +106,7 @@ public class WeakHandler {
      */
     public WeakHandler(@NonNull Looper looper, @NonNull Handler.Callback callback) {
         mCallback = callback;
-        mExec = new ExecHandler(looper, new WeakReference<>(callback));
+        mExec = new ExecHandler(this, looper);
     }
 
     /**
@@ -375,6 +376,65 @@ public class WeakHandler {
         return mExec.hasMessages(what, object);
     }
 
+    /**
+     * Returns a new {@link android.os.Message Message} from the global message pool. More efficient than
+     * creating and allocating new instances. The retrieved message has its handler set to this instance (Message.target == this).
+     *  If you don't want that facility, just call Message.obtain() instead.
+     */
+    public final Message obtainMessage() {
+        return mExec.obtainMessage();
+    }
+
+    /**
+     * Same as {@link #obtainMessage()}, except that it also sets the what member of the returned Message.
+     *
+     * @param what Value to assign to the returned Message.what field.
+     * @return A Message from the global message pool.
+     */
+    public final Message obtainMessage(int what) {
+        return mExec.obtainMessage(what);
+    }
+
+    /**
+     *
+     * Same as {@link #obtainMessage()}, except that it also sets the what and obj members
+     * of the returned Message.
+     *
+     * @param what Value to assign to the returned Message.what field.
+     * @param obj Value to assign to the returned Message.obj field.
+     * @return A Message from the global message pool.
+     */
+    public final Message obtainMessage(int what, Object obj) {
+        return mExec.obtainMessage(what, obj);
+    }
+
+    /**
+     *
+     * Same as {@link #obtainMessage()}, except that it also sets the what, arg1 and arg2 members of the returned
+     * Message.
+     * @param what Value to assign to the returned Message.what field.
+     * @param arg1 Value to assign to the returned Message.arg1 field.
+     * @param arg2 Value to assign to the returned Message.arg2 field.
+     * @return A Message from the global message pool.
+     */
+    public final Message obtainMessage(int what, int arg1, int arg2) {
+        return mExec.obtainMessage(what, arg1, arg2);
+    }
+
+    /**
+     *
+     * Same as {@link #obtainMessage()}, except that it also sets the what, obj, arg1,and arg2 values on the
+     * returned Message.
+     * @param what Value to assign to the returned Message.what field.
+     * @param arg1 Value to assign to the returned Message.arg1 field.
+     * @param arg2 Value to assign to the returned Message.arg2 field.
+     * @param obj Value to assign to the returned Message.obj field.
+     * @return A Message from the global message pool.
+     */
+    public final Message obtainMessage(int what, int arg1, int arg2, Object obj) {
+        return mExec.obtainMessage(what, arg1, arg2, obj);
+    }
+
     public final Looper getLooper() {
         return mExec.getLooper();
     }
@@ -390,40 +450,39 @@ public class WeakHandler {
     }
 
     private static class ExecHandler extends Handler {
-        private final WeakReference<Handler.Callback> mCallback;
+        private final WeakReference<WeakHandler> mBase;
 
-        ExecHandler() {
-            mCallback = null;
+        ExecHandler(WeakHandler base) {
+            super();
+            mBase = new WeakReference<>(base);
         }
 
-        ExecHandler(WeakReference<Handler.Callback> callback) {
-            mCallback = callback;
-        }
-
-        ExecHandler(Looper looper) {
+        ExecHandler(WeakHandler base, Looper looper) {
             super(looper);
-            mCallback = null;
-        }
-
-        ExecHandler(Looper looper, WeakReference<Handler.Callback> callback) {
-            super(looper);
-            mCallback = callback;
+            mBase = new WeakReference<>(base);
         }
 
         @Override
         public void handleMessage(@NonNull Message msg) {
-            if (mCallback == null) {
-                return;
+            WeakHandler base = mBase.get();
+            if (base != null) {
+                if (base.mCallback != null) {
+                    base.mCallback.handleMessage(msg);
+                } else {
+                    base.handleMessage(msg);
+                }
             }
-            final Handler.Callback callback = mCallback.get();
-            if (callback == null) { // Already disposed
-                return;
-            }
-            callback.handleMessage(msg);
         }
     }
 
-    static class WeakRunnable implements Runnable {
+    /**
+     * Subclasses must implement this to receive messages.
+     */
+    public void handleMessage(Message msg) {
+
+    }
+
+    private static final class WeakRunnable implements Runnable {
         private final WeakReference<Runnable> mDelegate;
         private final WeakReference<ChainedRef> mReference;
 
@@ -445,7 +504,7 @@ public class WeakHandler {
         }
     }
 
-    static class ChainedRef {
+    private static final class ChainedRef {
         @Nullable
         ChainedRef next;
         @Nullable
